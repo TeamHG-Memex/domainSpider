@@ -20,14 +20,32 @@ from socket import gaierror
 
 import spiderDatabase
 
+
+
+"""
+
+This program is meant to be a fairly simple webcrawler. It can be given
+any number of domains, and will begin crawling. It will record all links,
+raw html, and plain text to a sqlite3 database. It will seperately record
+links to PDFs, images, and media files, but not follow them. It will follow any link that leads to a page within any of the known domains, but not to exterior sites.
+
+On the initial visit to a domain, if it detects that there has been a redirect, it will record it and add the new domain to the domains list.
+
+"""
+
+
+
+
+
+
 class DomainSpider():
 
-    def __init__(self, domain="", crawlerDelay=0.0):
+    def __init__(self, domain="", crawlerDelay=0.0, dhHost, dbUser, dbName):
 
 
         self.__currentDomain = domain
 
-        self.__database = spiderDatabase.SpiderDatabase()
+        self.__database = spiderDatabase.SpiderDatabase(dbHost, dbUser, dbName)
 
         self.__urlQueue = queue.Queue()
         self._visitedURLs = []
@@ -46,18 +64,23 @@ class DomainSpider():
            'Accept-Language': 'en-US,en;q=0.8',
            'Connection': 'keep-alive'
        }
+
+
+
     def addDomain(self, domain):
+        print("Adding domain:",domain)
         self.__database.addDomain(domain)
 
     def crawl(self):
         url = "first URL"
 
         allDomains = self.__database.getAllDomains()
-
+        print(allDomains)
         for domain in self.__database.getIncompleteDomains():
             print("\n[+] Beginning domain:",domain)
-            # self._hopCount = 0
-            while self.__database.getNumberOfLinks(domain):# and self._hopCount<5:
+            self._hopCount = 0
+            while self.__database.getNumberOfLinks(domain):
+
                 domain, source, url = self.__database.getLink(domain)
                 print(
                     "    [*] Queue size: ",
@@ -65,11 +88,9 @@ class DomainSpider():
                 )
 
                 print("  [*] loading:",url)
-                # req = request.Request(url, headers=self.headers)
 
                 try:
-                    # urlData = request.urlopen(req)
-                    urlData = requests.get(url)
+                    urlData = requests.get(url, headers=self.headers)
 
                     # If we tried to pull a domain, and got a redirect:
                     if ( url==domain ) and url != urlData.url:
@@ -79,40 +100,16 @@ class DomainSpider():
                         allDomains.append( domain )
                         print("  [*] Added redirect to:",domain)
 
-                    urlData = urlData.content
+                    # rawURLData = urlData
+                    # tmp = requests.utils.get_unicode_from_response(urlData)
+                    # print(" [*] Encoding type:",tmp)
+                    urlData = requests.utils.get_unicode_from_response(urlData)
                 except:
                     traceback.print_exc(file=sys.stdout)
                     self.__database.removeLinkFromQueue(url)
                     self.__database.addError(domain, "unknown error", url)
                     continue
-                    # exit(1)
-                #     if urlData.getcode() > 400:
-                #         print("    [X] URL %d error"%urlData.getcode())
-                #         self.__database.addError("url error %d"%urlData.getcode(), url)
-                #         self.__database.removeLinkFromQueue(url)
-                #         continue
-                #
-                #     # If we tried to pull a domain, and got a redirect:
-                #     if ( url==domain ) and url != urlData.url:
-                #         self.__database.addRedirect(domain, urlData.url)
-                #         url = urlData.url
-                #         domain = urlData.url
-                #         allDomains.append( domain )
-                #         print("  [*] Added redirect to:",domain)
-                #
-                # except (HTTPError, gaierror, URLError) as e:
-                #     print("    [X] HTTPError")
-                #     self.__database.addError(domain, str(e), url)
-                #     self.__database.removeLinkFromQueue(url)
-                #     continue
-                #
-                # if urlData.getcode() > 400:
-                #     print("    [X] URL %d error"%urlData.getcode())
-                #     self.__database.addError("url error %d"%urlData.getcode(), url)
-                #     self.__database.removeLinkFromQueue(url)
-                #     continue
 
-                # urlData = urlData.read()
                 print("    [*] URL Data read")
                 bs = None
                 try:
@@ -149,8 +146,15 @@ class DomainSpider():
                 for link in bs.findAll("a", href=True):
 
                     # Don't follow intrapage links
-                    if link['href'].startswith("#") or link['href'].endswith(".mp3") or link['href'].endswith(".avi"):
+                    if link['href'].startswith("#"):
                         continue
+
+
+                    # Don't follow media links
+                    if link['href'].endswith(".mp3") or link['href'].endswith(".avi") or link['href'].endswith(".mov") or link['href'].endswith(".mpeg") or link['href'].endswith(".ppt") or link['href'].endswith(".pptx"):
+                        continue
+
+
                     # Make sure it is a full link, and lower case
                     link['href'] = parse.urljoin(url, link['href'])#.lower()
 
@@ -180,8 +184,6 @@ class DomainSpider():
                         if  any( e in link['href'] for e in allDomains )  and not self.__database.visitedLink( link['href'] ) and url != link['href']:
                             self.__database.addLink( domain, url, link['href'] )
 
-
-
                 self.__database.removeLinkFromQueue(url)
                 self._hopCount += 1
                 time.sleep( self.crawlerDelay )
@@ -193,13 +195,19 @@ class DomainSpider():
 
 if __name__ == "__main__":
 
-    ds = DomainSpider()
-    with open("websiteOutput.txt", 'r') as f:
-    # with open("fakeWebsites.txt", 'r') as f:
+    ds = DomainSpider(
+        dbHost="enterprise.local",
+        dbUser="hopperj",
+        dbName="testing"
+    )
+
+    # with open("websiteOutput.txt", 'r') as f:
+    with open("fakeWebsites.txt", 'r') as f:
         websites = f.readlines()
         for website in websites[:]:
             # print("\n\n\n****************************************************")
             # print("Website: ",website,"\n")
             ds.addDomain(website.strip())
+        print("\nBegin the crawl!")
         ds.crawl()
             # print("\n****************************************************")
